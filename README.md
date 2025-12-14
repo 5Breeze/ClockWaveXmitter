@@ -1,4 +1,4 @@
-# RadioClock - Radio Signal Clock Generator
+# ClockWaveXmitter - Radio Signal Clock Generator
 **[English](README.md)|[中文](README_ZH.md)**
 
 A radio signal clock transmitter supporting ESP32 and ESP32-C3, featuring a web configuration interface, WiFi setup, and multi-time, multi-protocol scheduling.
@@ -261,6 +261,7 @@ Enhanced version based on the original nisejjy project:
 **Copyright**: 5Breeze
 
 For redistribution, adaptation, or commercial use, please credit the source.
+
 
 
 
