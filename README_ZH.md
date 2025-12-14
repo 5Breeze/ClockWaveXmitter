@@ -1,4 +1,4 @@
-# RadioClock - 无线电信号时钟生成器
+# ClockWaveXmitter - 电波钟信号发生器
 
 **[English](README.md)|[中文](README_ZH.md)**
 
