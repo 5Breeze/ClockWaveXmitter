@@ -108,6 +108,13 @@ typedef struct {
 TimeSchedule schedules[MAX_SCHEDULES];
 int schedule_count = 0;
 
+// Multi-station rotation settings
+#define ROTATION_INTERVAL_MINUTES 1  // Switch station every N minutes when multiple stations are active
+int current_schedule_index = -1;     // Current schedule being used (-1 = none)
+unsigned long last_rotation_time = 0; // Last time we rotated to next station
+int applicable_schedules[MAX_SCHEDULES]; // Indexes of applicable schedules for current time
+int applicable_count = 0;            // Number of applicable schedules
+
 // interrupt cycle to makeup radio wave, buzzer (500Hz = 1KHz cycle):
 // peripheral freq == 80MHz
 //    ex. radio freq 40KHz: intr 80KHz: 80KHz / 80MHz => 1/1000 (1/tm0cycle)
@@ -455,6 +462,9 @@ void loop() {
         applyCurrentSchedule();
         
         if (lastmin != nowtm.tm_min) {
+          // Reset schedule index when minute changes - allow rotation to restart
+          current_schedule_index = -1;
+          last_rotation_time = millis();
           makebitpattern();
           printbits60();
         }
@@ -1190,14 +1200,46 @@ void applyCurrentSchedule(void)
   // Calculate current minute of day (0-1439)
   int current_min = nowtm.tm_hour * 60 + nowtm.tm_min;
   
-  // Find applicable schedule
-  int new_station = SN_JJY_E;  // Default
+  // Find all applicable schedules for current time
+  applicable_count = 0;
   for (int i = 0; i < schedule_count; i++) {
     if (current_min >= schedules[i].start_min && 
         current_min < schedules[i].end_min) {
-      new_station = schedules[i].station;
-      break;
+      applicable_schedules[applicable_count] = i;
+      applicable_count++;
     }
+  }
+  
+  int new_station = SN_JJY_E;  // Default
+  
+  if (applicable_count == 0) {
+    // No applicable schedule, use default
+    current_schedule_index = -1;
+  } else if (applicable_count == 1) {
+    // Single schedule, use it
+    current_schedule_index = 0;
+    new_station = schedules[applicable_schedules[0]].station;
+  } else {
+    // Multiple schedules - rotate through them
+    unsigned long now = millis();
+    
+    // Initialize on first time
+    if (current_schedule_index == -1) {
+      current_schedule_index = 0;
+      last_rotation_time = now;
+    }
+    
+    // Check if it's time to rotate to next schedule
+    if ((now - last_rotation_time) >= (ROTATION_INTERVAL_MINUTES * 60000UL)) {
+      current_schedule_index++;
+      if (current_schedule_index >= applicable_count) {
+        current_schedule_index = 0;
+      }
+      last_rotation_time = now;
+      Serial.printf("Rotating to schedule %d of %d\n", current_schedule_index + 1, applicable_count);
+    }
+    
+    new_station = schedules[applicable_schedules[current_schedule_index]].station;
   }
   
   // Change station if needed
@@ -1413,19 +1455,19 @@ void initWebServer(void)
   });
   
   server.on("/api/status", HTTP_GET, []() {
-    int current_min = nowtm.tm_hour * 60 + nowtm.tm_min;
-    int current_station = SN_JJY_E;
-    for (int i = 0; i < schedule_count; i++) {
-      if (current_min >= schedules[i].start_min && 
-          current_min < schedules[i].end_min) {
-        current_station = schedules[i].station;
-        break;
-      }
-    }
-    
+    // Build response with rotation information
     String json = "{\"time\":\"" + String(nowtm.tm_hour) + ":" +
-                  String(nowtm.tm_min) + ":" + String(nowtm.tm_sec) +
-                  "\",\"station\":\"" + String(station_names[current_station]) + "\"}";
+                  String(nowtm.tm_min) + ":" + String(nowtm.tm_sec) + "\"";
+    
+    // Add applicable schedules count for rotation display
+    json += ",\"applicable_schedules\":[";
+    for (int i = 0; i < applicable_count; i++) {
+      if (i > 0) json += ",";
+      json += String(applicable_schedules[i]);
+    }
+    json += "]";
+    
+    json += "}";
     server.send(200, "application/json", json);
   });
   
@@ -1436,14 +1478,18 @@ String getIndexHTML(void)
 {
   String html = "<!DOCTYPE html><html><head>";
   html += "<meta charset='UTF-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-  html += "<title>无线电时间服务配置</title>";
+  html += "<title>Radio Station</title>";
   html += "<style>";
   html += "body{font-family:'Segoe UI',Arial,sans-serif;background:linear-gradient(135deg,#667eea,#764ba2);";
   html += "min-height:100vh;margin:0;padding:10px}";
   html += ".container{background:white;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,0.3);";
   html += "max-width:900px;margin:0 auto;overflow:hidden}";
-  html += ".header{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:30px;text-align:center}";
+  html += ".header{background:linear-gradient(135deg,#667eea,#764ba2);color:white;padding:30px;text-align:center;position:relative}";
   html += ".header h1{margin:0;font-size:28px}";
+  html += ".lang-switch{position:absolute;top:10px;right:10px;display:flex;gap:5px}";
+  html += ".lang-btn{padding:6px 12px;background:rgba(255,255,255,0.2);color:white;border:1px solid white;";
+  html += "border-radius:4px;cursor:pointer;font-size:12px;transition:all 0.3s}";
+  html += ".lang-btn.active{background:white;color:#667eea}";
   html += ".tabs{display:flex;background:#f5f5f5;border-bottom:1px solid #ddd}";
   html += ".tab-btn{flex:1;padding:15px;border:none;background:none;cursor:pointer;font-weight:600;color:#666;";
   html += "border-bottom:3px solid transparent;transition:all 0.3s}";
@@ -1466,7 +1512,9 @@ String getIndexHTML(void)
   html += ".btn-secondary{background:#f0f0f0;color:#333;flex:1}";
   html += ".btn-danger{background:#dc3545;color:white;padding:8px 12px;flex:0}";
   html += ".time-display{background:#667eea;color:white;padding:20px;border-radius:8px;";
-  html += "text-align:center;font-size:32px;font-weight:300;margin-bottom:20px;font-family:monospace}";
+  html += "text-align:center;font-size:32px;font-weight:300;margin-bottom:10px;font-family:monospace}";
+  html += ".rotation-info{background:#e7f3ff;color:#0066cc;padding:12px;border-radius:8px;";
+  html += "margin-bottom:20px;font-size:13px;border-left:4px solid #0066cc}";
   html += ".status{padding:12px;border-radius:8px;margin-bottom:15px;font-size:14px}";
   html += ".status.success{background:#d4edda;color:#155724;border:1px solid #c3e6cb}";
   html += ".status.error{background:#f8d7da;color:#721c24;border:1px solid #f5c6cb}";
@@ -1485,23 +1533,29 @@ String getIndexHTML(void)
   html += ".modal-footer{display:flex;gap:10px}";
   html += "</style></head><body>";
   html += "<div class='container'>";
-  html += "<div class='header'><h1>无线电时间服务</h1><p>配置管理面板</p></div>";
+  html += "<div class='header'>";
+  html += "<div class='lang-switch'>";
+  html += "<button class='lang-btn active' onclick='setLanguage(\"zh\")' id='langZh'>中文</button>";
+  html += "<button class='lang-btn' onclick='setLanguage(\"en\")' id='langEn'>English</button>";
+  html += "</div>";
+  html += "<h1 data-i18n='title'>无线电时间服务</h1><p data-i18n='subtitle'>配置管理面板</p></div>";
   html += "<div class='tabs'>";
-  html += "<button class='tab-btn active' onclick='switchTab(0)'>WiFi设置</button>";
-  html += "<button class='tab-btn' onclick='switchTab(1)'>时间计划</button>";
-  html += "<button class='tab-btn' onclick='switchTab(2)'>电台信息</button>";
+  html += "<button class='tab-btn active' onclick='switchTab(0)' data-i18n='tab_wifi'>WiFi设置</button>";
+  html += "<button class='tab-btn' onclick='switchTab(1)' data-i18n='tab_schedule'>时间计划</button>";
+  html += "<button class='tab-btn' onclick='switchTab(2)' data-i18n='tab_station'>电台信息</button>";
   html += "</div>";
   
   html += "<div class='tab-content active'>";
   html += "<div class='content'>";
   html += "<div id='statusMsg'></div>";
   html += "<div class='time-display' id='timeDisplay'>00:00:00</div>";
-  html += "<div class='section'><h2>WiFi设置</h2>";
-  html += "<div class='form-group'><label>网络名称(SSID)</label>";
-  html += "<input type='text' id='ssid' placeholder='输入WiFi SSID'></div>";
-  html += "<div class='form-group'><label>密码</label>";
-  html += "<input type='password' id='password' placeholder='输入WiFi密码'></div>";
-  html += "<div class='form-group'><label>时区(秒)</label>";
+  html += "<div class='rotation-info' id='rotationInfo'></div>";
+  html += "<div class='section'><h2 data-i18n='wifi_settings'>WiFi设置</h2>";
+  html += "<div class='form-group'><label data-i18n='ssid_label'>网络名称(SSID)</label>";
+  html += "<input type='text' id='ssid' placeholder='WiFi SSID'></div>";
+  html += "<div class='form-group'><label data-i18n='password_label'>密码</label>";
+  html += "<input type='password' id='password' placeholder='WiFi密码'></div>";
+  html += "<div class='form-group'><label data-i18n='timezone_label'>时区(秒)</label>";
   html += "<select id='timezone'>";
   html += "<option value='32400'>UTC+9 (日本/东京)</option>";
   html += "<option value='28800'>UTC+8 (中国/台湾)</option>";
@@ -1510,22 +1564,22 @@ String getIndexHTML(void)
   html += "<option value='-18000'>UTC-5 (美国东部)</option>";
   html += "<option value='-28800'>UTC-8 (美国西部)</option>";
   html += "</select>";
-  html += "<div class='timezone-info'>当前时区偏移: <span id='tzDisplay'>32400</span> 秒</div>";
+  html += "<div class='timezone-info'><span data-i18n='current_tz'>当前时区偏移</span>: <span id='tzDisplay'>32400</span> s</div>";
   html += "</div>";
-  html += "<div class='button-group'><button class='btn-primary' onclick='saveWiFiConfig()'>保存WiFi设置</button></div>";
+  html += "<div class='button-group'><button class='btn-primary' onclick='saveWiFiConfig()' data-i18n='save_wifi'>保存WiFi设置</button></div>";
   html += "</div></div></div>";
   
   html += "<div class='tab-content'>";
   html += "<div class='content'>";
-  html += "<div class='section'><h2>时间计划</h2>";
+  html += "<div class='section'><h2 data-i18n='schedule_manage'>时间计划</h2>";
   html += "<div id='schedulesList'></div>";
   html += "<div class='button-group'>";
-  html += "<button class='btn-primary' onclick='showAddScheduleModal()'>添加计划</button>";
+  html += "<button class='btn-primary' onclick='showAddScheduleModal()' data-i18n='add_schedule'>添加计划</button>";
   html += "</div></div></div></div>";
   
   html += "<div class='tab-content'>";
   html += "<div class='content'>";
-  html += "<div class='section'><h2>可用电台</h2>";
+  html += "<div class='section'><h2 data-i18n='available_station'>可用电台</h2>";
   html += "<div id='stationsList'></div>";
   html += "</div></div></div>";
   
@@ -1534,28 +1588,53 @@ String getIndexHTML(void)
   // Modal for adding schedule
   html += "<div id='scheduleModal' class='modal'>";
   html += "<div class='modal-content'>";
-  html += "<div class='modal-header'>添加时间计划</div>";
+  html += "<div class='modal-header' data-i18n='add_plan'>添加时间计划</div>";
   html += "<div class='modal-body'>";
-  html += "<div class='form-group'><label>选择电台</label>";
+  html += "<div class='form-group'><label data-i18n='select_station'>选择电台</label>";
   html += "<select id='scheduleStation'></select></div>";
-  html += "<div class='form-group'><label>开始时间</label>";
+  html += "<div class='form-group'><label data-i18n='start_time'>开始时间</label>";
   html += "<input type='time' id='scheduleStartTime'></div>";
-  html += "<div class='form-group'><label>结束时间</label>";
+  html += "<div class='form-group'><label data-i18n='end_time'>结束时间</label>";
   html += "<input type='time' id='scheduleEndTime'></div>";
   html += "</div>";
   html += "<div class='modal-footer'>";
-  html += "<button class='btn-primary' onclick='addScheduleFromModal()'>添加</button>";
-  html += "<button class='btn-secondary' onclick='closeModal()'>取消</button>";
+  html += "<button class='btn-primary' onclick='addScheduleFromModal()' data-i18n='add'>添加</button>";
+  html += "<button class='btn-secondary' onclick='closeModal()' data-i18n='cancel'>取消</button>";
   html += "</div></div></div>";
   
   html += "<script>";
-  html += "let stations=[];";
+  html += "const i18n={zh:{title:'无线电时间服务',subtitle:'配置管理面板',tab_wifi:'WiFi设置',";
+  html += "tab_schedule:'时间计划',tab_station:'电台信息',wifi_settings:'WiFi设置',";
+  html += "ssid_label:'网络名称(SSID)',password_label:'密码',timezone_label:'时区(秒)',";
+  html += "current_tz:'当前时区偏移',save_wifi:'保存WiFi设置',schedule_manage:'时间计划',";
+  html += "add_schedule:'添加计划',available_station:'可用电台',add_plan:'添加时间计划',";
+  html += "select_station:'选择电台',start_time:'开始时间',end_time:'结束时间',";
+  html += "add:'添加',cancel:'取消'},";
+  html += "en:{title:'Radio Station',subtitle:'Configuration Portal',tab_wifi:'WiFi Settings',";
+  html += "tab_schedule:'Schedules',tab_station:'Stations',wifi_settings:'WiFi Settings',";
+  html += "ssid_label:'Network Name (SSID)',password_label:'Password',timezone_label:'Timezone (sec)',";
+  html += "current_tz:'Current Timezone',save_wifi:'Save WiFi Settings',schedule_manage:'Schedule',";
+  html += "add_schedule:'Add Schedule',available_station:'Available Stations',add_plan:'Add Schedule',";
+  html += "select_station:'Select Station',start_time:'Start Time',end_time:'End Time',";
+  html += "add:'Add',cancel:'Cancel'}};";
+  html += "let lang='zh',stations=[];";
+  html += "function setLanguage(l){lang=l;";
+  html += "document.getElementById('langZh').classList.toggle('active',l==='zh');";
+  html += "document.getElementById('langEn').classList.toggle('active',l==='en');";
+  html += "document.querySelectorAll('[data-i18n]').forEach(el=>{";
+  html += "el.textContent=i18n[l][el.getAttribute('data-i18n')]||el.textContent});";
+  html += "loadData();}";
   html += "function switchTab(n){";
   html += "const btns=document.querySelectorAll('.tab-btn');const tabs=document.querySelectorAll('.tab-content');";
   html += "btns.forEach((b,i)=>b.classList.toggle('active',i===n));";
   html += "tabs.forEach((t,i)=>t.classList.toggle('active',i===n));}";
   html += "function updateTime(){fetch('/api/status').then(r=>r.json()).then(d=>{";
-  html += "document.getElementById('timeDisplay').textContent=d.time}).catch(e=>{})}";
+  html += "document.getElementById('timeDisplay').textContent=d.time;";
+  html += "const activeStations=d.applicable_schedules?d.applicable_schedules.length:0;";
+  html += "if(activeStations>1){";
+  html += "document.getElementById('rotationInfo').textContent=(lang==='zh'?'轮流发波中: ':'Rotating: ')+activeStations+' '+";
+  html += "(lang==='zh'?'个电台':'stations');}else{document.getElementById('rotationInfo').textContent='';}";
+  html += "}).catch(e=>{})}";
   html += "async function loadData(){try{";
   html += "const cf=await fetch('/api/config');const cfg=await cf.json();";
   html += "document.getElementById('timezone').value=cfg.timezone;";
@@ -1570,12 +1649,12 @@ String getIndexHTML(void)
   html += "let shtml='';sc.forEach((x,i)=>{";
   html += "const sh=Math.floor(x.start/60);const sm=x.start%60;";
   html += "const eh=Math.floor(x.end/60);const em=x.end%60;";
-  html += "const st=stations[x.station]?stations[x.station].name:'未知';";
+  html += "const st=stations[x.station]?stations[x.station].name:'Unknown';";
   html += "shtml+='<div class=\"schedule-item\"><div class=\"schedule-info\">'";
-  html += "+'<strong>'+st+'</strong><br/>时间: '+String(sh).padStart(2,'0')+':'+String(sm).padStart(2,'0')";
+  html += "+'<strong>'+st+'</strong><br/>'+String(sh).padStart(2,'0')+':'+String(sm).padStart(2,'0')";
   html += "+' - '+String(eh).padStart(2,'0')+':'+String(em).padStart(2,'0')+\"</div>\"";
-  html += "+'<button class=\"btn-danger\" onclick=\"deleteSchedule('+i+')\">删除</button></div>'});";
-  html += "document.getElementById('schedulesList').innerHTML=shtml||'<p>暂无计划</p>';";
+  html += "+'<button class=\"btn-danger\" onclick=\"deleteSchedule('+i+'\")>'+(lang==='zh'?'删除':'Delete')+'</button></div>'});";
+  html += "document.getElementById('schedulesList').innerHTML=shtml||'<p>'+(lang==='zh'?'暂无计划':'No schedules')+'</p>';";
   html += "}catch(e){console.error(e)}}";
   html += "function showStatus(m,t){const d=document.getElementById('statusMsg');";
   html += "d.className='status '+t;d.textContent=m;d.style.display='block';";
@@ -1586,26 +1665,34 @@ String getIndexHTML(void)
   html += "const st=document.getElementById('scheduleStation').value;";
   html += "const start=document.getElementById('scheduleStartTime').value;";
   html += "const end=document.getElementById('scheduleEndTime').value;";
-  html += "if(!start||!end){showStatus('请填写完整的时间','error');return}";
+  html += "const msg=lang==='zh'?'请填写完整的时间':'Please fill in complete time';";
+  html += "if(!start||!end){showStatus(msg,'error');return}";
   html += "const [sh,sm]=start.split(':').map(Number);const [eh,em]=end.split(':').map(Number);";
   html += "const startMin=sh*60+sm;const endMin=eh*60+em;";
   html += "fetch('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},";
   html += "body:JSON.stringify({station:parseInt(st),start:startMin,end:endMin})})";
-  html += ".then(r=>r.json()).then(d=>{if(d.status==='ok'){showStatus('计划已添加','success');";
-  html += "closeModal();loadData()}else showStatus('添加失败','error')})";
-  html += ".catch(e=>showStatus('错误: '+e,'error'))}";
-  html += "function deleteSchedule(i){if(confirm('确定删除此计划？')){";
+  html += ".then(r=>r.json()).then(d=>{";
+  html += "if(d.status==='ok'){";
+  html += "showStatus(lang==='zh'?'计划已添加':'Schedule added','success');";
+  html += "closeModal();loadData()}else showStatus(lang==='zh'?'添加失败':'Failed','error')})";
+  html += ".catch(e=>showStatus('Error: '+e,'error'))}";
+  html += "function deleteSchedule(i){";
+  html += "const msg=lang==='zh'?'确定删除此计划？':'Delete this schedule?';";
+  html += "if(confirm(msg)){";
   html += "fetch('/api/schedule?index='+i,{method:'DELETE'})";
-  html += ".then(r=>r.json()).then(d=>{if(d.status==='ok'){showStatus('计划已删除','success');loadData()}";
-  html += "else showStatus('删除失败','error')}).catch(e=>showStatus('错误: '+e,'error'))}}";
+  html += ".then(r=>r.json()).then(d=>{";
+  html += "if(d.status==='ok'){showStatus(lang==='zh'?'计划已删除':'Schedule deleted','success');loadData()}";
+  html += "else showStatus(lang==='zh'?'删除失败':'Delete failed','error')}).catch(e=>showStatus('Error: '+e,'error'))}}";
   html += "function saveWiFiConfig(){const s=document.getElementById('ssid').value;";
   html += "const p=document.getElementById('password').value;const tz=document.getElementById('timezone').value;";
-  html += "if(!s||!p){showStatus('请输入SSID和密码','error');return}";
+  html += "const msg=lang==='zh'?'请输入SSID和密码':'Please enter SSID and password';";
+  html += "if(!s||!p){showStatus(msg,'error');return}";
   html += "const fd=new FormData();fd.append('ssid',s);fd.append('password',p);fd.append('timezone',tz);";
   html += "fetch('/api/config',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{";
-  html += "showStatus('WiFi设置已保存，正在连接...',d.status==='ok'?'success':'error');";
+  html += "const saveMsg=lang==='zh'?'WiFi设置已保存，正在连接...':'WiFi saved, connecting...';";
+  html += "showStatus(saveMsg,d.status==='ok'?'success':'error');";
   html += "if(d.status==='ok')setTimeout(()=>location.reload(),2000)})";
-  html += ".catch(e=>showStatus('错误: '+e,'error'))}";
+  html += ".catch(e=>showStatus('Error: '+e,'error'))}";
   html += "document.getElementById('timezone').addEventListener('change',e=>{";
   html += "document.getElementById('tzDisplay').textContent=e.target.value});";
   html += "setInterval(updateTime,1000);loadData();updateTime();";
