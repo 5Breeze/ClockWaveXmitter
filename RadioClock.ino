@@ -22,7 +22,7 @@
 #if defined(CONFIG_IDF_TARGET_ESP32C3)
   // ESP32-C3 GPIO Pins
   #define PIN_RADIO  (3)  // Radio signal output pin
-  #define PIN_BUZZ   (4)  // Buzzer output pin
+  #define PIN_BUZZ    (4)  // Buzzer output pin
   #define PIN_LED    (5)  // LED indicator pin
 #else
   // ESP32 (Classic) GPIO Pins
@@ -1236,30 +1236,62 @@ void saveConfig(void)
 void loadSchedules(void)
 {
   schedule_count = 0;
+
   File schedFile = SPIFFS.open(STATION_CONFIG_FILE, "r");
   if (!schedFile) {
     Serial.println("No schedule file found, using default");
-    // Default: JJY-E all day
-    schedules[0].station = SN_JJY_E;
+    schedules[0].station   = SN_JJY_E;
     schedules[0].start_min = 0;
-    schedules[0].end_min = 1439;
+    schedules[0].end_min   = 1439;
     schedule_count = 1;
     return;
   }
-  
-  // Parse JSON schedule (simplified)
-  // TODO: Use ArduinoJson for proper parsing
+
+  StaticJsonDocument<1024> doc;
+  DeserializationError err = deserializeJson(doc, schedFile);
   schedFile.close();
-  
-  if (schedule_count == 0) {
-    // Default schedule
-    schedules[0].station = SN_JJY_E;
-    schedules[0].start_min = 0;
-    schedules[0].end_min = 1439;
-    schedule_count = 1;
+
+  if (err || !doc.is<JsonArray>()) {
+    Serial.println("Schedule JSON invalid, using default");
+    goto DEFAULT_SCHEDULE;
   }
-  
-  Serial.printf("Loaded %d schedules\n", schedule_count);
+{
+  JsonArray arr = doc.as<JsonArray>();
+
+  /* ---------- 遍历数组 ---------- */
+  for (JsonObject obj : arr) {
+    /* 普通 schedule 项 */
+    if (!obj.containsKey("station") ||
+        !obj.containsKey("start") ||
+        !obj.containsKey("end")) {
+      continue;
+    }
+
+    if (schedule_count >= MAX_SCHEDULES)
+      break;
+
+    schedules[schedule_count].station   = obj["station"].as<int>();
+    schedules[schedule_count].start_min = obj["start"].as<int>();
+    schedules[schedule_count].end_min   = obj["end"].as<int>();
+
+    schedule_count++;
+  }
+
+  if (schedule_count == 0) {
+    goto DEFAULT_SCHEDULE;
+  }
+
+  Serial.printf(
+    "Loaded %d schedules\n",
+    schedule_count
+  );
+  return;
+}
+DEFAULT_SCHEDULE:
+  schedules[0].station   = SN_JJY_E;
+  schedules[0].start_min = 0;
+  schedules[0].end_min   = 1439;
+  schedule_count = 1;
 }
 
 void saveSchedules(void)
@@ -1655,8 +1687,8 @@ String getIndexHTML(void)
   html += "<input type='password' id='password' placeholder='WiFi密码'></div>";
   html += "<div class='form-group'><label data-i18n='timezone_label'>时区(秒)</label>";
   html += "<select id='timezone'>";
-  html += "<option value='32400'>UTC+9 (日本/东京)</option>";
-  html += "<option value='28800'>UTC+8 (中国/台湾)</option>";
+  html += "<option value='32400'>UTC+9 (东京)</option>";
+  html += "<option value='28800'>UTC+8 (北京)</option>";
   html += "<option value='19800'>UTC+5:30 (印度)</option>";
   html += "<option value='0'>UTC+0 (伦敦)</option>";
   html += "<option value='-18000'>UTC-5 (美国东部)</option>";
