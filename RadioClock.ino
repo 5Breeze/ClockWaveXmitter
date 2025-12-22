@@ -19,9 +19,17 @@
 
 //...................................................................
 // Hardware Configuration - Auto-detect ESP32 variant
-  #define PIN_RADIO  (0)  // Radio signal output pin
-  #define PIN_BUZZ   (6)  // Buzzer output pin
-  #define PIN_LED    (7)  // LED indicator pin
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+  // ESP32-C3 GPIO Pins
+  #define PIN_RADIO  (3)  // Radio signal output pin
+  #define PIN_BUZZ    (4)  // Buzzer output pin
+  #define PIN_LED    (5)  // LED indicator pin
+#else
+  // ESP32 (Classic) GPIO Pins
+  #define PIN_RADIO  (26) // Radio signal output pin
+  #define PIN_BUZZ   (27) // Buzzer output pin
+  #define PIN_LED    (25) // LED indicator pin
+#endif
 
 // Library Includes
 #include <WiFi.h>           // WiFi connectivity
