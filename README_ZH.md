@@ -131,7 +131,7 @@ GPIO 5 → LED 指示灯（当前编码）
 
 * **设置时间范围** – 输入开始和结束时间
 
-  <img width="1611" height="481" alt="image" src="https://github.com/user-attachments/assets/9d7059b2-c5fc-4b56-90dd-fc0715419925" />  
+  <img width="1516" height="454" alt="image" src="https://github.com/user-attachments/assets/4b377fc8-c1ae-44c4-90b8-77c6ab7ca616" /> 
 
 * **选择无线电** – 为时间段选择无线电标准
 
