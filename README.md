@@ -31,9 +31,9 @@ Supports 7 radio standards:
 * JJY-W (60 KHz) – Fukuoka, Japan
 * WWVB (60 KHz) – USA
 * DCF77 (77.5 KHz) – Germany
-* BSF (77.5 KHz) – Taiwan
+* BSF (77.5 KHz) – China/Taiwan
 * MSF (60 KHz) – UK
-* BPC (68.5 KHz) – China
+* BPC (68.5 KHz) – China/HeNan
 
 ### 4. Scheduling
 
@@ -121,8 +121,7 @@ Install the following in Arduino IDE:
 <img width="1893" height="939" alt="image" src="https://github.com/user-attachments/assets/a226a92e-564a-4efa-9dbd-479df388a1c3" />
 
 * **Set Time Range** – Enter Start and End time
-<img width="1611" height="481" alt="image" src="https://github.com/user-attachments/assets/9d7059b2-c5fc-4b56-90dd-fc0715419925" />
-
+<img width="1516" height="454" alt="image" src="https://github.com/user-attachments/assets/4b377fc8-c1ae-44c4-90b8-77c6ab7ca616" />
 
 * **Select Radio** – Choose the radio standard for the period
 <img width="1878" height="908" alt="image" src="https://github.com/user-attachments/assets/659a54ce-d6a7-4952-b343-9133e6c337d0" />
@@ -261,6 +260,7 @@ Enhanced version based on the original nisejjy project:
 **Copyright**: 5Breeze
 
 For redistribution, adaptation, or commercial use, please credit the source.
+
 
 
 
