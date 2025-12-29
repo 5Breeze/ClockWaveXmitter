@@ -771,7 +771,7 @@ mb_bpc(void)
   quadize(nowtm.tm_hour % 12, 3, 2);
   quadize(nowtm.tm_min, 5, 3);
   quadize(nowtm.tm_wday, 8, 2);
-  bits60[10] = (nowtm.tm_hour / 12) * 2 + qparity(3, 7);
+  bits60[10] = (nowtm.tm_hour / 12) * 2 + qparity(1, 9);
   quadize(nowtm.tm_mday, 11, 3);
   quadize(nowtm.tm_mon + 1, 14, 2);
   quadize(nowtm.tm_year - 100, 16, 3);
